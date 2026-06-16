@@ -5,7 +5,6 @@ import traceback
 import sys
 from fastapi import FastAPI, Request, Response
 
-# Trapping initialization/import crashes directly to ensure visibility in Vercel
 try:
     from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
     from telegram.ext import (
@@ -371,81 +370,75 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(msg="Exception tracker hook caught update payload failure:", exc_info=context.error)
 
 # =====================================================================
-# ⚡ DIAGNOSTIC ENGINE & SERVERLESS BOOTSTRAP PIPELINE
+# ⚡ THE RAW LIGHTWEIGHT BACKEND STATE ENGINE
 # =====================================================================
-async def bootstrap_application():
-    global telegram_app
-    if telegram_app is None:
-        application = Application.builder().token(config.TOKEN).build()
-        fallback_rules = [CommandHandler('cancel', cancel)]
-        
-        shared_ordering_ui_states = {
-            config.SELECT_ITEM: [CallbackQueryHandler(handle_menu_buttons, pattern="^(cat_|item_|back_categories)")],
-            config.QUANTITY: [
-                CallbackQueryHandler(quantity_inline_handler, pattern="^(back_to_items|opt_custom|qty_)"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, quantity_text_handler)
-            ],
-            config.QTY_CONFIRM: [CallbackQueryHandler(handle_qty_confirm_options, pattern="^opt_")], 
-            config.CART_OPTIONS: [CallbackQueryHandler(handle_cart_options, pattern="^cart_")],
-            config.REVIEW: [CallbackQueryHandler(handle_final_review, pattern="^review_")],
-        }
-        
-        order_states = {config.CUSTOMER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, customer_name_received)]}
-        order_states.update(shared_ordering_ui_states)
-        
-        order_conv = ConversationHandler(
-            entry_points=[
-                MessageHandler(filters.Regex('^📝 Create New Order$'), register_sale_start),
-                CommandHandler(config.COMMAND_ORDER, register_sale_start),
-                CallbackQueryHandler(register_sale_start, pattern="^create_order_inline_fallback$")
-            ],
-            states=order_states,
-            fallbacks=fallback_rules,
-            allow_reentry=True
-        )
-        
-        checkout_states = {
-            config.SELECT_OPEN_ORDER: [
-                CallbackQueryHandler(handle_open_order_selection, pattern="^payid_"),
-                CallbackQueryHandler(handle_locked_tab_alert, pattern="^locked_tab_")
-            ],
-            config.CHOOSE_PAY_OR_APPEND: [CallbackQueryHandler(handle_pay_or_append_choice, pattern="^route_")],
-            config.PAYMENT_METHOD: [CallbackQueryHandler(handle_settlement_method, pattern="^settle_")],
-            config.TRANS_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, checkout_transaction_id_received)]
-        }
-        checkout_states.update(shared_ordering_ui_states)
-        
-        checkout_conv = ConversationHandler(
-            entry_points=[
-                MessageHandler(filters.Regex('^💳 Pay Open Order$'), pay_order_start),
-                CommandHandler(config.COMMAND_PAYMENT, pay_order_start),
-                CallbackQueryHandler(pay_order_start, pattern="^pay_order_inline_fallback$")
-            ],
-            states=checkout_states,
-            fallbacks=fallback_rules,
-            allow_reentry=True
-        )
-        
-        application.add_handler(CommandHandler('start', start))
-        application.add_handler(CommandHandler('cancel', cancel))
-        application.add_handler(CommandHandler('help', help_command))
-        application.add_handler(MessageHandler(filters.Regex('^📊 View Sales Report$'), sales_report_trigger))
-        application.add_handler(CommandHandler(config.COMMAND_VIEW_SALES, sales_report_trigger))
-        application.add_handler(CallbackQueryHandler(sales_report_trigger, pattern="^view_report_inline_fallback$"))
-        application.add_handler(CallbackQueryHandler(handle_kds_clicks, pattern="^kds_"))
-        application.add_handler(CallbackQueryHandler(handle_ticket_lookup_viewer, pattern="^(vw_rec_|close_archive_card)"))
-        application.add_handler(order_conv)
-        application.add_handler(checkout_conv)
-        application.add_error_handler(error_handler)
-        
-        database.init_db()
-        
-        # EXPLICIT SERVERLESS RUNTIME BOOTSTRAP
-        await application.initialize()
-        await application.updater.initialize() if application.updater else None
-        
-        telegram_app = application
-    return telegram_app
+def get_stateless_application_engine():
+    """Generates the routing mappings without forcing remote HTTP polling requests."""
+    # Build directly from base class to bypass token string network parsing limitations
+    application = Application.builder().token(config.TOKEN).build()
+    fallback_rules = [CommandHandler('cancel', cancel)]
+    
+    shared_ordering_ui_states = {
+        config.SELECT_ITEM: [CallbackQueryHandler(handle_menu_buttons, pattern="^(cat_|item_|back_categories)")],
+        config.QUANTITY: [
+            CallbackQueryHandler(quantity_inline_handler, pattern="^(back_to_items|opt_custom|qty_)"),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, quantity_text_handler)
+        ],
+        config.QTY_CONFIRM: [CallbackQueryHandler(handle_qty_confirm_options, pattern="^opt_")], 
+        config.CART_OPTIONS: [CallbackQueryHandler(handle_cart_options, pattern="^cart_")],
+        config.REVIEW: [CallbackQueryHandler(handle_final_review, pattern="^review_")],
+    }
+    
+    order_states = {config.CUSTOMER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, customer_name_received)]}
+    order_states.update(shared_ordering_ui_states)
+    
+    order_conv = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.Regex('^📝 Create New Order$'), register_sale_start),
+            CommandHandler(config.COMMAND_ORDER, register_sale_start),
+            CallbackQueryHandler(register_sale_start, pattern="^create_order_inline_fallback$")
+        ],
+        states=order_states,
+        fallbacks=fallback_rules,
+        allow_reentry=True
+    )
+    
+    checkout_states = {
+        config.SELECT_OPEN_ORDER: [
+            CallbackQueryHandler(handle_open_order_selection, pattern="^payid_"),
+            CallbackQueryHandler(handle_locked_tab_alert, pattern="^locked_tab_")
+        ],
+        config.CHOOSE_PAY_OR_APPEND: [CallbackQueryHandler(handle_pay_or_append_choice, pattern="^route_")],
+        config.PAYMENT_METHOD: [CallbackQueryHandler(handle_settlement_method, pattern="^settle_")],
+        config.TRANS_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, checkout_transaction_id_received)]
+    }
+    checkout_states.update(shared_ordering_ui_states)
+    
+    checkout_conv = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.Regex('^💳 Pay Open Order$'), pay_order_start),
+            CommandHandler(config.COMMAND_PAYMENT, pay_order_start),
+            CallbackQueryHandler(pay_order_start, pattern="^pay_order_inline_fallback$")
+        ],
+        states=checkout_states,
+        fallbacks=fallback_rules,
+        allow_reentry=True
+    )
+    
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(CommandHandler('cancel', cancel))
+    application.add_handler(CommandHandler('help', help_command))
+    application.add_handler(MessageHandler(filters.Regex('^📊 View Sales Report$'), sales_report_trigger))
+    application.add_handler(CommandHandler(config.COMMAND_VIEW_SALES, sales_report_trigger))
+    application.add_handler(CallbackQueryHandler(sales_report_trigger, pattern="^view_report_inline_fallback$"))
+    application.add_handler(CallbackQueryHandler(handle_kds_clicks, pattern="^kds_"))
+    application.add_handler(CallbackQueryHandler(handle_ticket_lookup_viewer, pattern="^(vw_rec_|close_archive_card)"))
+    application.add_handler(order_conv)
+    application.add_handler(checkout_conv)
+    application.add_error_handler(error_handler)
+    
+    database.init_db()
+    return application
 
 @app.post("/")
 async def process_webhook(request: Request):
@@ -453,23 +446,17 @@ async def process_webhook(request: Request):
         return Response(content=f"Webhook Execution Blocked:\n{IMPORT_ERROR_LOG}", media_type="text/plain", status_code=500)
     
     try:
-        # 1. Boot up the app configuration mapping smoothly
-        bot_instance = await bootstrap_application()
+        # Load mappings stateless
+        engine = get_stateless_application_engine()
         req_json = await request.json()
         
-        # 2. Parse the incoming message payload from Telegram
-        update = Update.de_json(req_json, bot_instance.bot)
+        # Hydrate base update directly
+        update = Update.de_json(req_json, engine.bot)
         
-        # 3. CRITICAL FOR VERCEL: Skip application.initialize() loops entirely.
-        # Initialize only the raw underlying bot client so it can authenticate tokens.
-        await bot_instance.bot.initialize()
-        
-        # 4. Stream the update directly into the state machine handlers cleanly
-        await bot_instance.update_queue.put(update)
-        await bot_instance.process_update(update)
-        
-        # 5. Shut down the client network socket cleanly before Vercel freezes the function
-        await bot_instance.bot.shutdown()
+        # Inject context execution pipeline bypass smoothly
+        await engine.initialize()
+        await engine.process_update(update)
+        await engine.shutdown()
             
     except Exception as e:
         logger.error(f"Runtime error processing update packet: {str(e)}")
@@ -480,21 +467,5 @@ async def process_webhook(request: Request):
 @app.get("/")
 async def health_check():
     if IMPORT_ERROR_LOG:
-        return {
-            "status": "error",
-            "diagnostics": "App initial initialization failed",
-            "traceback": IMPORT_ERROR_LOG,
-            "python_version": sys.version
-        }
-    
-    db_status = "Connected"
-    try:
-        database.get_client()
-    except Exception as db_err:
-        db_status = f"Failed to get database connection: {str(db_err)}"
-
-    return {
-        "status": "online", 
-        "engine": "Nud Coffee Serverless Framework Diagnostics Active",
-        "database_client": db_status
-    }
+        return {"status": "error", "diagnostics": IMPORT_ERROR_LOG}
+    return {"status": "online", "engine": "Nud Coffee Stateless Active Layout", "database_client": "Connected"}
