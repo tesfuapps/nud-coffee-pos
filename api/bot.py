@@ -453,13 +453,23 @@ async def process_webhook(request: Request):
         return Response(content=f"Webhook Execution Blocked:\n{IMPORT_ERROR_LOG}", media_type="text/plain", status_code=500)
     
     try:
+        # 1. Boot up the app configuration mapping smoothly
         bot_instance = await bootstrap_application()
         req_json = await request.json()
+        
+        # 2. Parse the incoming message payload from Telegram
         update = Update.de_json(req_json, bot_instance.bot)
         
-        # Pass the update straight to the execution engine 
-        # without calling application.initialize() which fires failing 400 network loops
+        # 3. CRITICAL FOR VERCEL: Skip application.initialize() loops entirely.
+        # Initialize only the raw underlying bot client so it can authenticate tokens.
+        await bot_instance.bot.initialize()
+        
+        # 4. Stream the update directly into the state machine handlers cleanly
+        await bot_instance.update_queue.put(update)
         await bot_instance.process_update(update)
+        
+        # 5. Shut down the client network socket cleanly before Vercel freezes the function
+        await bot_instance.bot.shutdown()
             
     except Exception as e:
         logger.error(f"Runtime error processing update packet: {str(e)}")
