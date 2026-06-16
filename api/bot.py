@@ -1,24 +1,40 @@
 # api/bot.py
 import logging
 import http
-from datetime import timedelta
+import traceback
+import sys
 from fastapi import FastAPI, Request, Response
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    ConversationHandler,
-    ContextTypes,
-    CallbackQueryHandler,
-)
-# Internal app imports
-from api import config
-from api import database
+
+# Attempt to load core telegram items carefully to trap hidden import issues
+try:
+    from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.ext import (
+        Application,
+        CommandHandler,
+        MessageHandler,
+        filters,
+        ConversationHandler,
+        ContextTypes,
+        CallbackQueryHandler,
+    )
+    import pytz
+    from api import config
+    from api import database
+    import libsql_client
+    import uvicorn
+    import fastapi
+    import telegram
+    
+    IMPORT_ERROR_LOG = None
+except Exception as e:
+    # Capture exactly what library failed to load or crashed during initialization
+    IMPORT_ERROR_LOG = f"Initialization Crash: {str(e)}\n{traceback.format_exc()}"
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+app = FastAPI()
+telegram_app = None
 
 # --- CORE UI COMPONENTS ---
 def get_main_keyboard():
@@ -341,16 +357,6 @@ async def finalize_payment_in_db(message_obj, context):
     if hasattr(message_obj, 'reply_text'): await message_obj.reply_text(txt, reply_markup=get_main_keyboard())
     else: await context.bot.send_message(chat_id=message_obj.chat_id, text=txt, reply_markup=get_main_keyboard())
 
-# --- ADMINISTRATIVE PRICING STRATEGY MODS ---
-async def admin_panel_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id not in config.ADMIN_IDS: return ConversationHandler.END
-    await update.message.reply_text("🛠️ Admin system settings locked down. Use direct desktop interface controls configurations.")
-    return ConversationHandler.END
-
-async def handle_admin_main(update, context): pass
-async def handle_admin_item_selection(update, context): pass
-async def handle_admin_price_input(update, context): pass
-
 # --- SALES ANALYTICS GENERATOR ENGINE ---
 async def sales_report_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_target = update.callback_query.message if update.callback_query else update.message
@@ -363,15 +369,11 @@ async def sales_report_trigger(update: Update, context: ContextTypes.DEFAULT_TYP
     
     await msg_target.reply_text(f"📊 **Daily Financial Activity Analytics**\nDate: {today_date}\nTotal Revenue: **{total:.2f} ETB**", parse_mode="Markdown")
 
-async def handle_report_selection(update, context): pass
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE): logger.error(msg="Exception tracker hook caught update payload failure:", exc_info=context.error)
 
 # =====================================================================
-# ⚡ FASTAPI WEBHOCK LOOP RUNTIME CONTROLLER SETUP (SERVERLESS HUB)
+# ⚡ DIAGNOSTIC ENGINE & PIPELINE HOOK
 # =====================================================================
-app = FastAPI()
-telegram_app = None
-
 async def bootstrap_application():
     global telegram_app
     if telegram_app is None:
@@ -445,15 +447,38 @@ async def bootstrap_application():
 
 @app.post("/")
 async def process_webhook(request: Request):
-    bot_instance = await bootstrap_application()
+    if IMPORT_ERROR_LOG:
+        return Response(content=f"Webhook Execution Blocked:\n{IMPORT_ERROR_LOG}", media_type="text/plain", status_code=500)
+    
     try:
+        bot_instance = await bootstrap_application()
         req_json = await request.json()
         update = Update.de_json(req_json, bot_instance.bot)
         await bot_instance.process_update(update)
     except Exception as e:
-        logger.error(f"Webhook transaction capture stream failure: {e}")
+        return Response(content=f"Runtime error processing update packet:\n{str(e)}\n{traceback.format_exc()}", media_type="text/plain", status_code=500)
     return Response(status_code=http.HTTPStatus.OK)
 
 @app.get("/")
 async def health_check():
-    return {"status": "online", "engine": "Nud Coffee Serverless Framework Setup"}
+    # If the app crashed during import statements, return the stack trace string directly to the screen!
+    if IMPORT_ERROR_LOG:
+        return {
+            "status": "error",
+            "diagnostics": "App initial initialization failed",
+            "traceback": IMPORT_ERROR_LOG,
+            "python_version": sys.version
+        }
+    
+    # Check database status check safely
+    db_status = "Connected"
+    try:
+        database.get_client()
+    except Exception as db_err:
+        db_status = f"Failed to get database connection: {str(db_err)}"
+
+    return {
+        "status": "online", 
+        "engine": "Nud Coffee Serverless Framework Diagnostics Active",
+        "database_client": db_status
+    }
