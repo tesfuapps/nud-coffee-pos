@@ -457,10 +457,9 @@ async def process_webhook(request: Request):
         req_json = await request.json()
         update = Update.de_json(req_json, bot_instance.bot)
         
-        # CRITICAL FOR VERCEL: Complete lifecycle execution block
-        await bot_instance.initialize()
+        # Pass the update straight to the execution engine 
+        # without calling application.initialize() which fires failing 400 network loops
         await bot_instance.process_update(update)
-        await bot_instance.shutdown()
             
     except Exception as e:
         logger.error(f"Runtime error processing update packet: {str(e)}")
