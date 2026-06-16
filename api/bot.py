@@ -5,7 +5,7 @@ import traceback
 import sys
 from fastapi import FastAPI, Request, Response
 
-# Attempt to load core telegram items carefully to trap hidden import issues
+# Trapping initialization/import crashes directly to ensure visibility in Vercel
 try:
     from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
     from telegram.ext import (
@@ -27,7 +27,6 @@ try:
     
     IMPORT_ERROR_LOG = None
 except Exception as e:
-    # Capture exactly what library failed to load or crashed during initialization
     IMPORT_ERROR_LOG = f"Initialization Crash: {str(e)}\n{traceback.format_exc()}"
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -132,7 +131,6 @@ async def handle_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def quantity_inline_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer(); data = query.data
     if data == "back_to_items":
-        context.user_data['current_category'] = context.user_data.get('current_category')
         return config.SELECT_ITEM
     elif data == "opt_custom":
         await query.message.edit_text(text="✏️ Type the exact quantity value as a text message:")
@@ -257,7 +255,7 @@ async def handle_ticket_lookup_viewer(update: Update, context: ContextTypes.DEFA
         try: await query.message.delete()
         except Exception: pass
 
-# --- FLOW 2: SETTLEMENT CHEKOUT LEDGER ---
+# --- FLOW 2: SETTLEMENT CHECKOUT LEDGER ---
 async def pay_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data['active_closer_name'] = update.effective_user.first_name
@@ -369,14 +367,16 @@ async def sales_report_trigger(update: Update, context: ContextTypes.DEFAULT_TYP
     
     await msg_target.reply_text(f"📊 **Daily Financial Activity Analytics**\nDate: {today_date}\nTotal Revenue: **{total:.2f} ETB**", parse_mode="Markdown")
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE): logger.error(msg="Exception tracker hook caught update payload failure:", exc_info=context.error)
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE): 
+    logger.error(msg="Exception tracker hook caught update payload failure:", exc_info=context.error)
 
 # =====================================================================
-# ⚡ DIAGNOSTIC ENGINE & PIPELINE HOOK
+# ⚡ DIAGNOSTIC ENGINE & SERVERLESS BOOTSTRAP PIPELINE
 # =====================================================================
 async def bootstrap_application():
     global telegram_app
     if telegram_app is None:
+        # Initialize cleanly without pinning localized background network socket polling loops
         application = Application.builder().token(config.TOKEN).build()
         fallback_rules = [CommandHandler('cancel', cancel)]
         
@@ -440,8 +440,11 @@ async def bootstrap_application():
         application.add_error_handler(error_handler)
         
         database.init_db()
+        
+        # EXPLICIT SERVERLESS RUNTIME BOOTSTRAP (Bypasses active socket hang-ups)
         await application.initialize()
-        await application.start()
+        await application.updater.initialize() if application.updater else None
+        
         telegram_app = application
     return telegram_app
 
@@ -456,12 +459,12 @@ async def process_webhook(request: Request):
         update = Update.de_json(req_json, bot_instance.bot)
         await bot_instance.process_update(update)
     except Exception as e:
+        logger.error(f"Runtime error processing update packet: {str(e)}")
         return Response(content=f"Runtime error processing update packet:\n{str(e)}\n{traceback.format_exc()}", media_type="text/plain", status_code=500)
     return Response(status_code=http.HTTPStatus.OK)
 
 @app.get("/")
 async def health_check():
-    # If the app crashed during import statements, return the stack trace string directly to the screen!
     if IMPORT_ERROR_LOG:
         return {
             "status": "error",
@@ -470,7 +473,6 @@ async def health_check():
             "python_version": sys.version
         }
     
-    # Check database status check safely
     db_status = "Connected"
     try:
         database.get_client()
