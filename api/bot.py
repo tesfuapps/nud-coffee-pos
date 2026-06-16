@@ -376,7 +376,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 async def bootstrap_application():
     global telegram_app
     if telegram_app is None:
-        # Initialize cleanly without pinning localized background network socket polling loops
         application = Application.builder().token(config.TOKEN).build()
         fallback_rules = [CommandHandler('cancel', cancel)]
         
@@ -441,7 +440,7 @@ async def bootstrap_application():
         
         database.init_db()
         
-        # EXPLICIT SERVERLESS RUNTIME BOOTSTRAP (Bypasses active socket hang-ups)
+        # EXPLICIT SERVERLESS RUNTIME BOOTSTRAP
         await application.initialize()
         await application.updater.initialize() if application.updater else None
         
@@ -456,11 +455,18 @@ async def process_webhook(request: Request):
     try:
         bot_instance = await bootstrap_application()
         req_json = await request.json()
+        
+        # Parse the update payload from Telegram
         update = Update.de_json(req_json, bot_instance.bot)
-        await bot_instance.process_update(update)
+        
+        # Force immediate processing inside the asynchronous context manager block
+        async with bot_instance:
+            await bot_instance.process_update(update)
+            
     except Exception as e:
         logger.error(f"Runtime error processing update packet: {str(e)}")
         return Response(content=f"Runtime error processing update packet:\n{str(e)}\n{traceback.format_exc()}", media_type="text/plain", status_code=500)
+    
     return Response(status_code=http.HTTPStatus.OK)
 
 @app.get("/")
