@@ -13,7 +13,6 @@ from telegram.ext import (
     ContextTypes,
     CallbackQueryHandler,
 )
-
 # Internal app imports
 from api import config
 from api import database
