@@ -455,19 +455,18 @@ async def process_webhook(request: Request):
     try:
         bot_instance = await bootstrap_application()
         req_json = await request.json()
-        
-        # Parse the update payload from Telegram
         update = Update.de_json(req_json, bot_instance.bot)
         
-        # Force immediate processing inside the asynchronous context manager block
-        async with bot_instance:
-            await bot_instance.process_update(update)
+        # CRITICAL FOR VERCEL: Complete lifecycle execution block
+        await bot_instance.initialize()
+        await bot_instance.process_update(update)
+        await bot_instance.shutdown()
             
     except Exception as e:
         logger.error(f"Runtime error processing update packet: {str(e)}")
         return Response(content=f"Runtime error processing update packet:\n{str(e)}\n{traceback.format_exc()}", media_type="text/plain", status_code=500)
     
-    return Response(status_code=http.HTTPStatus.OK)
+    return Response(status_code=http.HTTPStatus.OK)S
 
 @app.get("/")
 async def health_check():
