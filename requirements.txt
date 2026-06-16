@@ -1,2 +1,4 @@
-python-telegram-bot==20.8
-aiosqlite==0.20.0
+python-telegram-bot==21.1.1
+libsql-client
+fastapi
+uvicorn
