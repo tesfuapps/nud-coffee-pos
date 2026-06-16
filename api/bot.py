@@ -466,7 +466,7 @@ async def process_webhook(request: Request):
         logger.error(f"Runtime error processing update packet: {str(e)}")
         return Response(content=f"Runtime error processing update packet:\n{str(e)}\n{traceback.format_exc()}", media_type="text/plain", status_code=500)
     
-    return Response(status_code=http.HTTPStatus.OK)S
+    return Response(status_code=http.HTTPStatus.OK)
 
 @app.get("/")
 async def health_check():
