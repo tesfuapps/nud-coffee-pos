@@ -497,8 +497,25 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def shortcut_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pass
 
+async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat = update.effective_chat
+    await update.message.reply_text(
+        f"Chat ID: `{chat.id}`\nType: `{chat.type}`",
+        parse_mode="Markdown",
+    )
+
+
 async def post_init(application: Application) -> None:
     await database.init_extended_tables()
+
+    try:
+        chat = await application.bot.get_chat(config.GROUP_CHAT_ID)
+        logger.info(f"Connected to group chat: {chat.title} (id={config.GROUP_CHAT_ID})")
+    except Exception as e:
+        logger.error(
+            f"Cannot access GROUP_CHAT_ID={config.GROUP_CHAT_ID}: {e}. "
+            f"The bot must be a member of the group and the chat ID must be correct."
+        )
 
 def main():
     # Build complete telegram application state mapping
@@ -537,6 +554,7 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_accept_order, pattern="^accept_"))
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('cancel', cancel))
+    application.add_handler(CommandHandler('chatid', chatid_command))
 
     # Run the bot using long polling (no webhook)
     try:
