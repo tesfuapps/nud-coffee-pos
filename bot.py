@@ -188,19 +188,31 @@ async def process_cart_options(update: Update, context: ContextTypes.DEFAULT_TYP
         keyboard = [[InlineKeyboardButton("☕ Accept Order", callback_data=f"accept_{order_id}")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        msg = await context.bot.send_message(
-            chat_id=config.GROUP_CHAT_ID, 
-            text=alert_msg, 
-            parse_mode="Markdown",
-            reply_markup=reply_markup
-        )
-        await database.update_group_msg_id(order_id, msg.message_id)
+        group_msg_sent = False
+        try:
+            msg = await context.bot.send_message(
+                chat_id=config.GROUP_CHAT_ID, 
+                text=alert_msg, 
+                parse_mode="Markdown",
+                reply_markup=reply_markup
+            )
+            await database.update_group_msg_id(order_id, msg.message_id)
+            group_msg_sent = True
+        except Exception as e:
+            logger.error(f"Failed to send order alert to group chat: {e}")
         
         # Confirmation to operator
-        await update.message.reply_text(
-            f"✅ Order `{order_id}` saved successfully and pushed to group queue!",
-            parse_mode="Markdown"
-        )
+        if group_msg_sent:
+            await update.message.reply_text(
+                f"✅ Order `{order_id}` saved successfully and pushed to group queue!",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text(
+                f"⚠️ Order `{order_id}` saved locally, but failed to push to the Telegram group chat.\n"
+                f"Please ensure the bot is added to the group and the group ID is correct.",
+                parse_mode="Markdown"
+            )
         return await start(update, context)
         
     return config.CART_OPTIONS
@@ -290,18 +302,21 @@ async def finalize_payment(update: Update, context: ContextTypes.DEFAULT_TYPE, t
             reply_to_msg_id = int(group_msg_id)
             
         try:
-            await context.bot.send_message(
-                chat_id=config.GROUP_CHAT_ID, 
-                text=close_msg, 
-                parse_mode="Markdown",
-                reply_to_message_id=reply_to_msg_id
-            )
-        except Exception:
-            await context.bot.send_message(
-                chat_id=config.GROUP_CHAT_ID, 
-                text=close_msg, 
-                parse_mode="Markdown"
-            )
+            try:
+                await context.bot.send_message(
+                    chat_id=config.GROUP_CHAT_ID, 
+                    text=close_msg, 
+                    parse_mode="Markdown",
+                    reply_to_message_id=reply_to_msg_id
+                )
+            except Exception:
+                await context.bot.send_message(
+                    chat_id=config.GROUP_CHAT_ID, 
+                    text=close_msg, 
+                    parse_mode="Markdown"
+                )
+        except Exception as e:
+            logger.error(f"Failed to send payment close notification to group chat: {e}")
 
     await update.message.reply_text(f"🏁 Order `{order_id}` completely settled and marked as PAID.")
     return await start(update, context)
