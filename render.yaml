@@ -4,6 +4,10 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
+    disk:
+      name: nud-coffee-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
       - key: BOT_TOKEN
         sync: false
@@ -14,4 +18,4 @@ services:
       - key: ADMIN_ID
         sync: false
       - key: DB_PATH
-        value: /tmp/nud_coffee.db
+        value: /data/nud_coffee.db
