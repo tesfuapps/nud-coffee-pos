@@ -1,9 +1,7 @@
 services:
   - type: worker
     name: nud-coffee-bot
-    runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
+    env: docker
     disk:
       name: nud-coffee-data
       mountPath: /data
