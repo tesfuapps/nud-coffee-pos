@@ -35,7 +35,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if is_admin(user_id):
         reply_keyboard = [
             ['📝 Create New Order', '💳 Pay Open Order'],
-            ['📊 View Sales Report', '⚙️ Admin Management']
+            ['📋 View Orders', '📈 Sales Result'],
+            ['⚙️ Admin Management']
         ]
         await update.message.reply_text(
             f"👋 WELCOME BACK, ADMIN {name}!\nSelect an option from the panel below:",
@@ -344,11 +345,45 @@ async def handle_accept_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             pass
 
+# --- View Orders (Today) ---
+async def view_orders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+
+    orders = await database.get_all_orders_today()
+
+    if not orders:
+        await update.message.reply_text("📭 No orders placed today yet.")
+        return ConversationHandler.END
+
+    status_icons = {
+        'OPEN':      '🔴',
+        'PREPARING': '🟡',
+        'PAID':      '🟢',
+    }
+
+    lines = [
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "📋 *TODAY'S ORDERS*",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+    for row in orders:
+        order_id, customer, total, status, ts = row
+        icon = status_icons.get(status, '⚪')
+        lines.append(
+            f"{icon} `{order_id}` — *{customer}*\n"
+            f"   💰 {total:,.0f} ETB  |  {status}  |  🕐 {ts}"
+        )
+        lines.append("──────────────────────")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    return ConversationHandler.END
+
 # --- Sales Reports ---
 async def view_sales_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update.effective_user.id):
         return ConversationHandler.END
-        
+
     report = await database.generate_daily_report_metrics()
     await update.message.reply_text(report, parse_mode="Markdown")
     return ConversationHandler.END
@@ -458,6 +493,8 @@ def main():
         entry_points=[
             MessageHandler(filters.Regex('(?i)^📝 Create New Order$'), register_sale_start),
             MessageHandler(filters.Regex('(?i)^💳 Pay Open Order$'), pay_order_start),
+            MessageHandler(filters.Regex('(?i)^📋 View Orders$'), view_orders),
+            MessageHandler(filters.Regex('(?i)^📈 Sales Result$'), view_sales_report),
             MessageHandler(filters.Regex('(?i)^📊 View Sales Report$'), view_sales_report),
             MessageHandler(filters.Regex('(?i)^⚙️ Admin Management$'), admin_panel_start_text),
             CommandHandler('admin', admin_panel_start_text),

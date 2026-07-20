@@ -1,0 +1,21 @@
+# Environment secrets - NEVER commit this
+.env
+
+# SQLite database
+*.db
+*.db-shm
+*.db-wal
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# OS files
+.DS_Store
+Thumbs.db

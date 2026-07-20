@@ -145,6 +145,21 @@ async def mark_order_preparing(order_id: str):
         )
         await conn.commit()
 
+async def get_all_orders_today() -> list:
+    """Returns all orders from today with order_id, customer_name, total, status, timestamp."""
+    from datetime import datetime
+    db_date = datetime.now().strftime("%Y-%m-%d")
+    async with aiosqlite.connect(DB_PATH) as conn:
+        cursor = await conn.cursor()
+        await cursor.execute("""
+            SELECT order_id, customer_name, SUM(quantity * price), status, MAX(timestamp)
+            FROM sales_registration
+            WHERE date = ?
+            GROUP BY order_id
+            ORDER BY MAX(timestamp) DESC
+        """, (db_date,))
+        return await cursor.fetchall()
+
 async def generate_daily_report_metrics() -> str:
     from datetime import datetime
     db_date = datetime.now().strftime("%Y-%m-%d")
