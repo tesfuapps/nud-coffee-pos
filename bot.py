@@ -2,6 +2,8 @@ import asyncio
 import logging
 import random
 import string
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 
 from telegram.ext import (
@@ -21,6 +23,32 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# --- Health Check Server to satisfy Render port scan ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path in ("/", "/health"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"OK")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        # Suppress logging health checks to keep logs clean
+        pass
+
+def run_health_check_server():
+    import os
+    port = int(os.getenv("PORT", "8080"))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    logger.info(f"Starting health check server on port {port}...")
+    try:
+        server.serve_forever()
+    except Exception as e:
+        logger.error(f"Health check server error: {e}")
 
 # --- Helper to check Admin status ---
 def is_admin(user_id: int) -> bool:
@@ -508,6 +536,10 @@ async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def post_init(application: Application) -> None:
     await database.init_extended_tables()
 
+    # Log configuration variables for Render deployment diagnostics
+    masked_token = f"...{config.BOT_TOKEN[-8:]}" if config.BOT_TOKEN else "None"
+    logger.info(f"Starting post_init check with BOT_TOKEN={masked_token} and GROUP_CHAT_ID={config.GROUP_CHAT_ID}")
+
     try:
         chat = await application.bot.get_chat(config.GROUP_CHAT_ID)
         logger.info(f"Connected to group chat: {chat.title} (id={config.GROUP_CHAT_ID})")
@@ -555,6 +587,10 @@ def main():
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('cancel', cancel))
     application.add_handler(CommandHandler('chatid', chatid_command))
+
+    # Start health check server in a background thread to satisfy Render port check
+    health_thread = threading.Thread(target=run_health_check_server, daemon=True)
+    health_thread.start()
 
     # Run the bot using long polling (no webhook)
     try:
