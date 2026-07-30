@@ -45,6 +45,37 @@ async def init_extended_tables():
         ''')
         await conn.commit()
 
+DEFAULT_MENU = [
+    # (category_name, item_name, price)
+    ("Hot Items", "Normal Coffee",   60.0),
+    ("Hot Items", "Tea",             40.0),
+    ("Hot Items", "Cappuccino",      80.0),
+    ("Hot Items", "American Coffee", 100.0),
+    ("Hot Items", "Special Tea",     120.0),
+    ("Cold Items", "Water 1L",       30.0),
+    ("Cold Items", "Water 2L",       60.0),
+    ("Cold Items", "Water 1/2",      20.0),
+    ("Bakery Items", "English Cake", 60.0),
+    ("Bakery Items", "Banana Cake",  60.0),
+]
+
+async def seed_default_menu():
+    """Insert default categories and items if they don't already exist."""
+    async with aiosqlite.connect(DB_PATH) as conn:
+        # Insert categories
+        categories = list({row[0] for row in DEFAULT_MENU})
+        for cat in categories:
+            await conn.execute(
+                "INSERT OR IGNORE INTO categories (name) VALUES (?)", (cat,)
+            )
+        # Insert items (INSERT OR IGNORE won't overwrite existing prices)
+        for cat, item, price in DEFAULT_MENU:
+            await conn.execute(
+                "INSERT OR IGNORE INTO menu_items (category_name, item_name, price) VALUES (?, ?, ?)",
+                (cat, item, price)
+            )
+        await conn.commit()
+
 async def add_category_to_db(category_name: str):
     async with aiosqlite.connect(DB_PATH) as conn:
         await conn.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_name,))
@@ -77,6 +108,26 @@ async def get_menu_from_db():
         await cursor.execute("SELECT item_name, price FROM menu_items ORDER BY item_name ASC")
         rows = await cursor.fetchall()
         return [{'name': r[0], 'price': r[1]} for r in rows]
+
+async def update_item_price_in_db(item_name: str, new_price: float):
+    async with aiosqlite.connect(DB_PATH) as conn:
+        await conn.execute(
+            "UPDATE menu_items SET price = ? WHERE item_name = ?",
+            (new_price, item_name)
+        )
+        await conn.commit()
+
+async def delete_item_from_db(item_name: str):
+    async with aiosqlite.connect(DB_PATH) as conn:
+        await conn.execute("DELETE FROM menu_items WHERE item_name = ?", (item_name,))
+        await conn.commit()
+
+async def delete_category_from_db(category_name: str):
+    """Delete a category and all its items."""
+    async with aiosqlite.connect(DB_PATH) as conn:
+        await conn.execute("DELETE FROM menu_items WHERE category_name = ?", (category_name,))
+        await conn.execute("DELETE FROM categories WHERE name = ?", (category_name,))
+        await conn.commit()
 
 async def save_order_to_db(customer_name: str, waiter_name: str, cart: list, total_amount: float) -> tuple:
     order_id = generate_order_id()

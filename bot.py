@@ -431,13 +431,15 @@ async def view_sales_report(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.message.reply_text(report, parse_mode="Markdown")
     return ConversationHandler.END
 
+
 # --- Admin Management Panel ---
 async def admin_panel_start_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update.effective_user.id):
         return ConversationHandler.END
     reply_keyboard = [
         ['➕ Add New Menu Item', '🗂️ Add New Category'],
-        ['↩️ Back to Dashboard']
+        ['✏️ Edit Item Price',   '🗑️ Delete Menu Item'],
+        ['❌ Delete Category',   '↩️ Back to Dashboard'],
     ]
     await update.message.reply_text(
         "⚙️ **Admin Database Management Control**",
@@ -448,22 +450,60 @@ async def admin_panel_start_text(update: Update, context: ContextTypes.DEFAULT_T
 
 async def process_admin_main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     choice = update.message.text.strip()
+
     if choice == '➕ Add New Menu Item':
         categories = await database.get_categories_from_db()
         reply_keyboard = [[cat] for cat in categories]
         reply_keyboard.append(['/cancel'])
         await update.message.reply_text(
-            "🏷️ Select a category for the new item, or type a new category name:", 
+            "🏷️ Select a category for the new item, or type a new category name:",
             reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
         )
         return config.ADM_ADD_CAT
+
     elif choice == '🗂️ Add New Category':
         await update.message.reply_text(
-            "🏷️ Enter the name of the new category (e.g. *Hot Items*, *Cold Items*):" ,
+            "🏷️ Enter the name of the new category (e.g. *Hot Items*, *Cold Items*):",
             parse_mode="Markdown",
             reply_markup=ReplyKeyboardRemove()
         )
         return config.ADM_ADD_CAT_ONLY
+
+    elif choice == '✏️ Edit Item Price':
+        categories = await database.get_categories_from_db()
+        reply_keyboard = [[cat] for cat in categories]
+        reply_keyboard.append(['/cancel'])
+        await update.message.reply_text(
+            "📂 Select the *category* of the item you want to edit:",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        )
+        context.user_data['admin_action'] = 'edit_price'
+        return config.ADM_EDIT_PRICE_CAT
+
+    elif choice == '🗑️ Delete Menu Item':
+        categories = await database.get_categories_from_db()
+        reply_keyboard = [[cat] for cat in categories]
+        reply_keyboard.append(['/cancel'])
+        await update.message.reply_text(
+            "📂 Select the *category* of the item you want to delete:",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        )
+        context.user_data['admin_action'] = 'delete_item'
+        return config.ADM_DEL_ITEM_CAT
+
+    elif choice == '❌ Delete Category':
+        categories = await database.get_categories_from_db()
+        reply_keyboard = [[cat] for cat in categories]
+        reply_keyboard.append(['/cancel'])
+        await update.message.reply_text(
+            "⚠️ Select a *category* to delete (ALL its items will also be removed!):",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        )
+        return config.ADM_DEL_CAT_SEL
+
     return await start(update, context)
 
 async def admin_add_cat_only_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -478,12 +518,9 @@ async def admin_add_cat_only_received(update: Update, context: ContextTypes.DEFA
 async def admin_category_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     category = update.message.text.strip()
     context.user_data['new_item_category'] = category
-    
-    # Ensure category exists in db
     await database.add_category_to_db(category)
-    
     await update.message.reply_text(
-        "✏️ Enter the name of the new item:", 
+        "✏️ Enter the name of the new item:",
         reply_markup=ReplyKeyboardRemove()
     )
     return config.ADM_ADD_ITEM_NAME
@@ -495,22 +532,132 @@ async def admin_item_name_received(update: Update, context: ContextTypes.DEFAULT
 
 async def admin_item_price_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     price_text = update.message.text.strip()
-    if not price_text.isdigit():
+    if not price_text.replace('.', '', 1).isdigit():
         await update.message.reply_text("❌ Numbers only. Please enter a proper price number:")
         return config.ADM_ADD_ITEM_PRICE
-        
+
     category = context.user_data['new_item_category']
     name = context.user_data['new_item_name']
     price = float(price_text)
-    
-    # Insert new entry item into database table
     await database.add_item_to_db(category, name, price)
-    
     await update.message.reply_text(
-        f"✅ Added **{name}** ({price:,.2f} ETB) to the **{category}** category!", 
+        f"✅ Added **{name}** ({price:,.0f} ETB) to the **{category}** category!",
         parse_mode="Markdown"
     )
-    return await start(update, context)
+    return await admin_panel_start_text(update, context)
+
+# --- Edit Price Flow ---
+async def admin_edit_price_cat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    category = update.message.text.strip()
+    items = await database.get_items_by_category(category)
+    if not items:
+        await update.message.reply_text(f"❌ No items found in *{category}*.", parse_mode="Markdown")
+        return config.ADM_EDIT_PRICE_CAT
+
+    context.user_data['edit_price_category'] = category
+    reply_keyboard = [[f"{i[0]} ({i[1]:,.0f} ETB)"] for i in items]
+    reply_keyboard.append(['/cancel'])
+    await update.message.reply_text(
+        f"✏️ Select the item to edit from *{category}*:",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    )
+    return config.ADM_EDIT_PRICE_ITEM
+
+async def admin_edit_price_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # Strip the price part "(XX ETB)" from the selection
+    selection = update.message.text.strip()
+    item_name = selection.split(" (")[0]
+    context.user_data['edit_price_item'] = item_name
+    await update.message.reply_text(
+        f"💰 Enter the new price for *{item_name}* (ETB, numbers only):",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return config.ADM_EDIT_PRICE_VAL
+
+async def admin_edit_price_val(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    price_text = update.message.text.strip()
+    if not price_text.replace('.', '', 1).isdigit():
+        await update.message.reply_text("❌ Numbers only. Enter a valid price:")
+        return config.ADM_EDIT_PRICE_VAL
+
+    item_name = context.user_data['edit_price_item']
+    new_price = float(price_text)
+    await database.update_item_price_in_db(item_name, new_price)
+    await update.message.reply_text(
+        f"✅ *{item_name}* price updated to *{new_price:,.0f} ETB* successfully!",
+        parse_mode="Markdown"
+    )
+    return await admin_panel_start_text(update, context)
+
+# --- Delete Item Flow ---
+async def admin_del_item_cat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    category = update.message.text.strip()
+    items = await database.get_items_by_category(category)
+    if not items:
+        await update.message.reply_text(f"❌ No items found in *{category}*.", parse_mode="Markdown")
+        return config.ADM_DEL_ITEM_CAT
+
+    context.user_data['del_item_category'] = category
+    reply_keyboard = [[i[0]] for i in items]
+    reply_keyboard.append(['/cancel'])
+    await update.message.reply_text(
+        f"🗑️ Select the item to *delete* from *{category}*:",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    )
+    return config.ADM_DEL_ITEM_SEL
+
+async def admin_del_item_sel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    item_name = update.message.text.strip()
+    context.user_data['del_item_name'] = item_name
+    reply_keyboard = [[f"✅ Yes, Delete {item_name}", '❌ Cancel']]
+    await update.message.reply_text(
+        f"⚠️ Are you sure you want to delete *{item_name}*? This cannot be undone.",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    )
+    return config.ADM_DEL_ITEM_CONF
+
+async def admin_del_item_conf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    choice = update.message.text.strip()
+    item_name = context.user_data.get('del_item_name', '')
+    if choice.startswith('✅ Yes'):
+        await database.delete_item_from_db(item_name)
+        await update.message.reply_text(
+            f"🗑️ *{item_name}* has been permanently deleted.",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text("↩️ Deletion cancelled.")
+    return await admin_panel_start_text(update, context)
+
+# --- Delete Category Flow ---
+async def admin_del_cat_sel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    category = update.message.text.strip()
+    context.user_data['del_cat_name'] = category
+    reply_keyboard = [[f"✅ Yes, Delete {category}", '❌ Cancel']]
+    await update.message.reply_text(
+        f"⚠️ Delete *{category}* and ALL its items? This cannot be undone!",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    )
+    return config.ADM_DEL_CAT_CONF
+
+async def admin_del_cat_conf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    choice = update.message.text.strip()
+    cat_name = context.user_data.get('del_cat_name', '')
+    if choice.startswith('✅ Yes'):
+        await database.delete_category_from_db(cat_name)
+        await update.message.reply_text(
+            f"🗑️ Category *{cat_name}* and all its items have been permanently deleted.",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text("↩️ Deletion cancelled.")
+    return await admin_panel_start_text(update, context)
+
 
 # --- Global Interruption Handler ---
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -535,6 +682,7 @@ async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def post_init(application: Application) -> None:
     await database.init_extended_tables()
+    await database.seed_default_menu()
 
     # Log configuration variables for Render deployment diagnostics
     masked_token = f"...{config.BOT_TOKEN[-8:]}" if config.BOT_TOKEN else "None"
@@ -578,6 +726,17 @@ def main():
             config.ADM_ADD_ITEM_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_item_name_received)],
             config.ADM_ADD_ITEM_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_item_price_received)],
             config.ADM_ADD_CAT_ONLY: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_cat_only_received)],
+            # Edit price flow
+            config.ADM_EDIT_PRICE_CAT:  [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_edit_price_cat)],
+            config.ADM_EDIT_PRICE_ITEM: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_edit_price_item)],
+            config.ADM_EDIT_PRICE_VAL:  [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_edit_price_val)],
+            # Delete item flow
+            config.ADM_DEL_ITEM_CAT:  [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_del_item_cat)],
+            config.ADM_DEL_ITEM_SEL:  [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_del_item_sel)],
+            config.ADM_DEL_ITEM_CONF: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_del_item_conf)],
+            # Delete category flow
+            config.ADM_DEL_CAT_SEL:  [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_del_cat_sel)],
+            config.ADM_DEL_CAT_CONF: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_del_cat_conf)],
         },
         fallbacks=[CommandHandler('cancel', cancel), MessageHandler(filters.Regex('(?i)^/cancel$'), cancel)],
     )
