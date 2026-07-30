@@ -751,14 +751,33 @@ def main():
     health_thread = threading.Thread(target=run_health_check_server, daemon=True)
     health_thread.start()
 
-    # Run the bot using long polling (no webhook)
-    try:
-        application.run_polling(drop_pending_updates=True)
-    except Exception as e:
-        logger.error(f"Polling stopped due to error: {e}")
-        # Exit gracefully
-        import sys
-        sys.exit(1)
+    # Run the bot using long polling with conflict-safe retry
+    import time
+    from telegram.error import Conflict
+
+    MAX_RETRIES = 5
+    retry_delay = 15  # seconds
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            logger.info(f"Starting polling (attempt {attempt}/{MAX_RETRIES})...")
+            application.run_polling(drop_pending_updates=True)
+            break  # Clean exit — no need to retry
+        except Conflict as e:
+            logger.warning(
+                f"Conflict error: another instance is still running. "
+                f"Retrying in {retry_delay}s... (attempt {attempt}/{MAX_RETRIES})\n{e}"
+            )
+            if attempt < MAX_RETRIES:
+                time.sleep(retry_delay)
+            else:
+                logger.error("Max retries reached. Ensure only one bot instance is running.")
+                import sys
+                sys.exit(1)
+        except Exception as e:
+            logger.error(f"Polling stopped due to error: {e}")
+            import sys
+            sys.exit(1)
 
 if __name__ == '__main__':
     main()
