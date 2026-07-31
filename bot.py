@@ -217,6 +217,7 @@ async def process_cart_options(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         group_msg_sent = False
+        push_error = ""
         try:
             msg = await context.bot.send_message(
                 chat_id=config.GROUP_CHAT_ID, 
@@ -224,9 +225,13 @@ async def process_cart_options(update: Update, context: ContextTypes.DEFAULT_TYP
                 parse_mode="Markdown",
                 reply_markup=reply_markup
             )
-            await database.update_group_msg_id(order_id, msg.message_id)
             group_msg_sent = True
+            try:
+                await database.update_group_msg_id(order_id, msg.message_id)
+            except Exception as e:
+                logger.error(f"Order saved & pushed to group, but failed to store group_msg_id: {e}")
         except Exception as e:
+            push_error = str(e)
             logger.error(f"Failed to send order alert to group chat: {e}")
         
         # Confirmation to operator
@@ -238,6 +243,7 @@ async def process_cart_options(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             await update.message.reply_text(
                 f"⚠️ Order `{order_id}` saved locally, but failed to push to the Telegram group chat.\n"
+                f"Error: `{push_error}`\n"
                 f"Please ensure the bot is added to the group and the group ID is correct.",
                 parse_mode="Markdown"
             )
@@ -691,6 +697,10 @@ async def post_init(application: Application) -> None:
     try:
         chat = await application.bot.get_chat(config.GROUP_CHAT_ID)
         logger.info(f"Connected to group chat: {chat.title} (id={config.GROUP_CHAT_ID})")
+        await application.bot.send_message(
+            config.GROUP_CHAT_ID,
+            "🟢 NUD Coffee bot is online (group push test).",
+        )
     except Exception as e:
         logger.error(
             f"Cannot access GROUP_CHAT_ID={config.GROUP_CHAT_ID}: {e}. "
