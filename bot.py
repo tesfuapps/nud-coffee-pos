@@ -394,6 +394,23 @@ async def handle_accept_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             pass
 
+        try:
+            if group_msg_id and group_msg_id != "N/A":
+                await context.bot.send_message(
+                    chat_id=config.GROUP_CHAT_ID,
+                    text=updated_msg,
+                    parse_mode="Markdown",
+                    reply_to_message_id=int(group_msg_id),
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=config.GROUP_CHAT_ID,
+                    text=updated_msg,
+                    parse_mode="Markdown",
+                )
+        except Exception as e:
+            logger.error(f"Failed to send PREPARING status reply to group chat: {e}")
+
 # --- View Orders (Today) ---
 async def view_orders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update.effective_user.id):
