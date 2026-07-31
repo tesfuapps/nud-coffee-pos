@@ -63,8 +63,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if is_admin(user_id):
         reply_keyboard = [
             ['📝 Create New Order', '💳 Pay Open Order'],
-            ['📋 View Orders', '📈 Sales Result'],
-            ['⚙️ Admin Management']
+            ['➕ Add to Order', '📋 View Orders'],
+            ['📈 Sales Result', '⚙️ Admin Management']
         ]
         await update.message.reply_text(
             f"👋 WELCOME BACK, ADMIN {name}!\nSelect an option from the panel below:",
@@ -73,7 +73,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     else:
         reply_keyboard = [
             ['📝 Create New Order', '💳 Pay Open Order'],
-            ['📋 View Orders'],
+            ['➕ Add to Order', '📋 View Orders'],
         ]
         await update.message.reply_text(
             f"👋 WELCOME TO NUD COFFEE {name}!\nSelect an option from the panel below:",
@@ -167,20 +167,45 @@ async def quantity_received(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text("❌ Please enter a valid number greater than 0:")
         return config.QUANTITY
         
-    context.user_data['quantity'] = int(qty_text)
+    qty = int(qty_text)
     item = context.user_data['selected_item']
-    total = item['price'] * int(qty_text)
     
-    # Save current item summary text
-    summary = f"• {item['name']} x{qty_text} ({total:,} ETB)"
-    context.user_data['cart_summary'] = summary
+    # Accumulate into cart (merge same item quantities)
+    cart = context.user_data.setdefault('cart', [])
+    for entry in cart:
+        if entry['item'] == item['name']:
+            entry['qty'] += qty
+            break
+    else:
+        cart.append({'item': item['name'], 'qty': qty, 'price': item['price']})
+    context.user_data['cart'] = cart
+    
+    total = sum(e['qty'] * e['price'] for e in cart)
+    summary_lines = "\n".join(
+        f"• {e['item']} x{e['qty']} ({e['qty'] * e['price']:,.0f} ETB)" for e in cart
+    )
+    
+    # Addition-to-existing-order mode
+    if context.user_data.get('add_mode'):
+        reply_keyboard = [['✅ Confirm Addition', '➕ Add More Items', '/cancel']]
+        await update.message.reply_text(
+            f"📋 **Addition Summary**\n\n"
+            f"🆔 Order: `{context.user_data['add_order_id']}`\n"
+            f"{summary_lines}\n\n"
+            f"💰 **Added Total:** `{total:,} ETB`",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        )
+        return config.ADD_OPTIONS
+    
+    context.user_data['cart_summary'] = summary_lines
     context.user_data['total_amount'] = total
-
-    reply_keyboard = [['🛒 Confirm Order', '/cancel']]
+    
+    reply_keyboard = [['🛒 Confirm Order', '➕ Add More Items', '/cancel']]
     await update.message.reply_text(
         f"📋 **Order Summary Check**\n\n"
         f"👤 Customer: {context.user_data['customer_name']}\n"
-        f"{summary}\n\n"
+        f"{summary_lines}\n\n"
         f"💰 Total Cost: **{total:,} ETB**",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
@@ -190,15 +215,28 @@ async def quantity_received(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def process_cart_options(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     choice = update.message.text.strip()
     
+    if choice == '➕ Add More Items':
+        categories = await database.get_categories_from_db()
+        reply_keyboard = [[cat] for cat in categories]
+        reply_keyboard.append(['/cancel'])
+        await update.message.reply_text(
+            "📂 Select another *category* to add more items:",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        )
+        return config.SELECT_CATEGORY
+    
     if choice == '🛒 Confirm Order':
         cust_name = context.user_data['customer_name']
-        item = context.user_data['selected_item']
-        qty = context.user_data['quantity']
-        total = context.user_data['total_amount']
+        cart = context.user_data.get('cart', [])
+        total = sum(e['qty'] * e['price'] for e in cart)
         waiter_name = update.effective_user.first_name or "Waiter"
         
-        cart = [{'item': item['name'], 'qty': qty, 'price': item['price']}]
         order_id, timestamp = await database.save_order_to_db(cust_name, waiter_name, cart, total)
+        
+        item_lines = "\n".join(
+            f" • `{e['item']}` x `{e['qty']}` ({e['qty'] * e['price']:,.0f} ETB)" for e in cart
+        )
         
         # Beautified Alert notification
         alert_msg = (
@@ -209,7 +247,7 @@ async def process_cart_options(update: Update, context: ContextTypes.DEFAULT_TYP
             f"👤 **Customer/Table:** `{cust_name}`\n"
             f"──────────────────────\n"
             f"📦 **Items:**\n"
-            f" • `{item['name']}` x `{qty}`\n"
+            f"{item_lines}\n"
             f"💰 **Total Amount:** `{total:,} ETB`\n"
             f"──────────────────────\n"
             f"⚡ **Status:** 🔴 **UNPAID / OPEN**\n"
@@ -253,6 +291,124 @@ async def process_cart_options(update: Update, context: ContextTypes.DEFAULT_TYP
         return await start(update, context)
         
     return config.CART_OPTIONS
+
+# --- Add Items To Existing Order Flow ---
+async def add_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    rows = await database.get_open_orders()
+    
+    if not rows:
+        await update.message.reply_text("🎉 No open/unpaid orders found to add items to.")
+        return ConversationHandler.END
+        
+    reply_keyboard = [[f"{row[0]} - {row[1]} ({row[2]:,} ETB) [{row[3]}]"] for row in rows]
+    reply_keyboard.append(['/cancel'])
+    
+    await update.message.reply_text(
+        "➕ Select an open order to add items to:",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    )
+    return config.ADD_OPEN_ORDER
+
+async def add_open_order_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    selection = update.message.text.strip()
+    order_id = selection.split(" - ")[0]
+    
+    context.user_data.clear()
+    context.user_data['add_mode'] = True
+    context.user_data['add_order_id'] = order_id
+    
+    categories = await database.get_categories_from_db()
+    if not categories:
+        await update.message.reply_text("❌ No categories found. Admin must add menu categories first!")
+        return ConversationHandler.END
+    
+    reply_keyboard = [[cat] for cat in categories]
+    reply_keyboard.append(['/cancel'])
+    await update.message.reply_text(
+        "📂 Select an item *category* to add:",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    )
+    return config.SELECT_CATEGORY
+
+async def process_add_options(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    choice = update.message.text.strip()
+    
+    if choice == '➕ Add More Items':
+        categories = await database.get_categories_from_db()
+        reply_keyboard = [[cat] for cat in categories]
+        reply_keyboard.append(['/cancel'])
+        await update.message.reply_text(
+            "📂 Select another *category* to add more items:",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        )
+        return config.SELECT_CATEGORY
+    
+    if choice == '✅ Confirm Addition':
+        order_id = context.user_data['add_order_id']
+        cart = context.user_data.get('cart', [])
+        new_total, customer_name, status = await database.add_items_to_order(order_id, cart)
+        waiter_name = update.effective_user.first_name or "Waiter"
+        
+        added_lines = "\n".join(
+            f" • `{e['item']}` x `{e['qty']}` ({e['qty'] * e['price']:,.0f} ETB)" for e in cart
+        )
+        status_icon = '🟡 PREPARING' if status == 'PREPARING' else '🔴 OPEN'
+        
+        add_msg = (
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"➕ **ITEMS ADDED TO ORDER**\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🆔 **Order ID:** `{order_id}`\n"
+            f"👤 **Customer/Table:** `{customer_name}`\n"
+            f"──────────────────────\n"
+            f"📦 **Added:**\n"
+            f"{added_lines}\n"
+            f"──────────────────────\n"
+            f"💰 **New Total:** `{new_total:,.0f} ETB`\n"
+            f"🧑‍🍳 **By Waiter:** `{waiter_name}`\n"
+            f"⚡ **Status:** {status_icon}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━"
+        )
+        
+        _, _, _, group_msg_id = await database.get_order_details_for_billing(order_id)
+        reply_to_msg_id = None
+        if group_msg_id and group_msg_id.isdigit():
+            reply_to_msg_id = int(group_msg_id)
+        
+        group_posted = True
+        try:
+            try:
+                await context.bot.send_message(
+                    chat_id=config.GROUP_CHAT_ID,
+                    text=add_msg,
+                    parse_mode="Markdown",
+                    reply_to_message_id=reply_to_msg_id
+                )
+            except Exception:
+                await context.bot.send_message(
+                    chat_id=config.GROUP_CHAT_ID,
+                    text=add_msg,
+                    parse_mode="Markdown"
+                )
+        except Exception as e:
+            group_posted = False
+            logger.error(f"Failed to send ITEMS ADDED notification to group chat: {e}")
+        
+        if group_posted:
+            await update.message.reply_text(
+                f"✅ Items added to order `{order_id}` and posted to group queue.",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text(
+                f"⚠️ Items added to order `{order_id}` locally, but failed to post to the group.",
+                parse_mode="Markdown"
+            )
+        return await start(update, context)
+        
+    return config.ADD_OPTIONS
 
 # --- Order Closing / Payment Flow ---
 async def pay_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -729,6 +885,7 @@ def main():
         entry_points=[
             MessageHandler(filters.Regex('(?i)^📝 Create New Order$'), register_sale_start),
             MessageHandler(filters.Regex('(?i)^💳 Pay Open Order$'), pay_order_start),
+            MessageHandler(filters.Regex('(?i)^➕ Add to Order$'), add_order_start),
             MessageHandler(filters.Regex('(?i)^📋 View Orders$'), view_orders),
             MessageHandler(filters.Regex('(?i)^📈 Sales Result$'), view_sales_report),
             MessageHandler(filters.Regex('(?i)^📊 View Sales Report$'), view_sales_report),
@@ -741,7 +898,9 @@ def main():
             config.SELECT_CATEGORY: [MessageHandler(filters.TEXT & ~filters.COMMAND, category_selected)],
             config.SELECT_ITEM: [MessageHandler(filters.TEXT & ~filters.COMMAND, item_selected)],
             config.QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, quantity_received)],
-            config.CART_OPTIONS: [MessageHandler(filters.Regex('^🛒 Confirm Order$'), process_cart_options)],
+            config.CART_OPTIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_cart_options)],
+            config.ADD_OPEN_ORDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_open_order_selected)],
+            config.ADD_OPTIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_options)],
             config.SELECT_OPEN_ORDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, open_order_selected)],
             config.PAYMENT_METHOD: [MessageHandler(filters.TEXT & ~filters.COMMAND, payment_method_received)],
             config.TRANS_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, trans_id_received)],

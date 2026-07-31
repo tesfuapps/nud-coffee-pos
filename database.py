@@ -188,6 +188,46 @@ async def close_order_payment(order_id: str, settling_staff: str, payment_method
         )
         await conn.commit()
 
+async def add_items_to_order(order_id: str, cart: list) -> tuple:
+    """Append new items to an existing open order.
+
+    Returns (new_total, customer_name, status).
+    """
+    from datetime import datetime
+    now = datetime.now()
+    db_date = now.strftime("%Y-%m-%d")
+    timestamp = now.strftime("%d/%m/%Y, %I:%M %p")
+
+    async with aiosqlite.connect(DB_PATH) as conn:
+        cursor = await conn.cursor()
+        await cursor.execute(
+            "SELECT salesman, customer_name, status FROM sales_registration WHERE order_id = ? LIMIT 1",
+            (order_id,)
+        )
+        ref = await cursor.fetchone()
+        salesman = ref[0] if ref else "Waiter"
+        customer_name = ref[1] if ref else "Unknown"
+        status = ref[2] if ref else "OPEN"
+
+        for entry in cart:
+            await conn.execute(
+                """INSERT INTO sales_registration
+                (order_id, salesman, closing_salesman, customer_name, date, timestamp, coffee_type, quantity, price, payment_method, transaction_id, status, group_msg_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (order_id, salesman, "Pending", customer_name, db_date, timestamp, entry['item'], entry['qty'], entry['price'], "Pending", "Pending", status, "N/A")
+            )
+        await conn.commit()
+
+    async with aiosqlite.connect(DB_PATH) as conn:
+        cursor = await conn.cursor()
+        await cursor.execute(
+            "SELECT SUM(quantity * price) FROM sales_registration WHERE order_id = ?",
+            (order_id,)
+        )
+        row = await cursor.fetchone()
+        new_total = row[0] if row and row[0] else 0.0
+    return new_total, customer_name, status
+
 async def mark_order_preparing(order_id: str):
     async with aiosqlite.connect(DB_PATH) as conn:
         await conn.execute(

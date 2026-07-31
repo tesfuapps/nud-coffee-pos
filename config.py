@@ -57,3 +57,7 @@ ADM_DEL_ITEM_CONF = 35
 ADM_DEL_CAT_SEL = 36
 ADM_DEL_CAT_CONF = 37
 ADM_RESET_CONF = 38
+
+# Add items to an existing open order flow
+ADD_OPEN_ORDER = 60
+ADD_OPTIONS = 61
