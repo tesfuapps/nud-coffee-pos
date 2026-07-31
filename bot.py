@@ -71,9 +71,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
         )
     else:
-        reply_keyboard = [['📝 Create New Order']]
+        reply_keyboard = [
+            ['📝 Create New Order', '💳 Pay Open Order'],
+            ['📋 View Orders'],
+        ]
         await update.message.reply_text(
-            f"👋 WELCOME TO NUD COFFEE {name}!\nPress the button below to start your order:",
+            f"👋 WELCOME TO NUD COFFEE {name}!\nSelect an option from the panel below:",
             reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
         )
     return ConversationHandler.END
@@ -253,17 +256,13 @@ async def process_cart_options(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # --- Order Closing / Payment Flow ---
 async def pay_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("❌ Access Denied.")
-        return ConversationHandler.END
-        
     rows = await database.get_open_orders()
     
     if not rows:
         await update.message.reply_text("🎉 No open/unpaid orders found in the system right now.")
         return ConversationHandler.END
         
-    reply_keyboard = [[f"{row[0]} - {row[1]} ({row[2]:,} ETB)"] for row in rows]
+    reply_keyboard = [[f"{row[0]} - {row[1]} ({row[2]:,} ETB) [{row[3]}]"] for row in rows]
     reply_keyboard.append(['/cancel'])
     
     await update.message.reply_text(
@@ -413,9 +412,6 @@ async def handle_accept_order(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # --- View Orders (Today) ---
 async def view_orders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_admin(update.effective_user.id):
-        return ConversationHandler.END
-
     orders = await database.get_all_orders_today()
 
     if not orders:
@@ -434,11 +430,12 @@ async def view_orders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         "━━━━━━━━━━━━━━━━━━━━━━",
     ]
     for row in orders:
-        order_id, customer, total, status, ts = row
+        order_id, customer, total, status, ts, salesman = row
         icon = status_icons.get(status, '⚪')
         lines.append(
             f"{icon} `{order_id}` — *{customer}*\n"
-            f"   💰 {total:,.0f} ETB  |  {status}  |  🕐 {ts}"
+            f"   💰 {total:,.0f} ETB  |  {status}  |  🕐 {ts}\n"
+            f"   👤 Waiter: *{salesman}*"
         )
         lines.append("──────────────────────")
 

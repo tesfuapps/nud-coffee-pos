@@ -156,10 +156,10 @@ async def get_open_orders():
     async with aiosqlite.connect(DB_PATH) as conn:
         cursor = await conn.cursor()
         await cursor.execute("""
-            SELECT DISTINCT order_id, customer_name, SUM(quantity * price) 
+            SELECT DISTINCT order_id, customer_name, SUM(quantity * price), salesman
             FROM sales_registration 
             WHERE status IN ('OPEN', 'PREPARING') 
-            GROUP BY order_id
+            GROUP BY order_id, customer_name, salesman
         """)
         return await cursor.fetchall()
 
@@ -203,10 +203,10 @@ async def get_all_orders_today() -> list:
     async with aiosqlite.connect(DB_PATH) as conn:
         cursor = await conn.cursor()
         await cursor.execute("""
-            SELECT order_id, customer_name, SUM(quantity * price), status, MAX(timestamp)
+            SELECT order_id, customer_name, SUM(quantity * price), status, MAX(timestamp), salesman
             FROM sales_registration
             WHERE date = ?
-            GROUP BY order_id
+            GROUP BY order_id, customer_name, status, salesman
             ORDER BY MAX(timestamp) DESC
         """, (db_date,))
         return await cursor.fetchall()
